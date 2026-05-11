@@ -1,0 +1,9 @@
+================================================================================
+  BÀI LAB: GATEWAY CONTENT DISARM — Chặn Stegomalware tại Cổng Mạng
+================================================================================
+
+Đọc README.txt trên từng container để biết hướng dẫn chi tiết:
+  - Trên gateway_proxy: ~/README.txt  (Bước 1 & 2)
+  - Trên user_pc:       ~/README.txt  (Bước 3 & 4)
+
+Tài liệu lab: file://LAB_DOCS/gateway_content_disarm.pdf

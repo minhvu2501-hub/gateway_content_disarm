@@ -1,0 +1,127 @@
+name: Build and Push Lab Images to ghcr.io
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  LAB: gateway_content_disarm
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare build assets
+        run: |
+          # Create parent dir structure so Dockerfile ADD paths resolve correctly
+          # Dockerfile: ADD $labdir/$imagedir/sys_tar/sys.tar /
+          # → needs: <context>/gateway_content_disarm/gateway_proxy/sys_tar/sys.tar
+          mkdir -p /tmp/labs
+          cp -r $GITHUB_WORKSPACE /tmp/labs/${{ env.LAB }}
+          cd /tmp/labs/${{ env.LAB }}
+
+          # Generate infected WAV file for fileserver
+          python3 gen_lofi_chill.py
+
+          # Create empty sys.tar for each container
+          for c in gateway_proxy user_pc fileserver; do
+            mkdir -p ${c}/sys_tar
+            tar -cf ${c}/sys_tar/sys.tar -T /dev/null
+            echo "  [+] sys.tar for ${c}"
+          done
+
+          # Create lab-level placeholder tarballs
+          tar -czf sys_${{ env.LAB }}.tar.gz -T /dev/null
+          tar -czf ${{ env.LAB }}.tar.gz      -T /dev/null
+
+          echo "BUILD_CONTEXT=/tmp/labs" >> $GITHUB_ENV
+
+      - name: Build and push gateway_proxy
+        run: |
+          docker build \
+            --build-arg registry=labtainers \
+            --build-arg lab=${{ env.LAB }} \
+            --build-arg labdir=${{ env.LAB }} \
+            --build-arg imagedir=gateway_proxy \
+            --build-arg user_name=ubuntu \
+            --build-arg password=ubuntu \
+            --build-arg apt_source=ubuntu \
+            --build-arg version=1.0 \
+            -t ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.gateway_proxy.student:latest \
+            -f /tmp/labs/${{ env.LAB }}/dockerfiles/Dockerfile.${{ env.LAB }}.gateway_proxy.student \
+            ${{ env.BUILD_CONTEXT }}
+          docker push ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.gateway_proxy.student:latest
+
+      - name: Build and push user_pc
+        run: |
+          docker build \
+            --build-arg registry=labtainers \
+            --build-arg lab=${{ env.LAB }} \
+            --build-arg labdir=${{ env.LAB }} \
+            --build-arg imagedir=user_pc \
+            --build-arg user_name=ubuntu \
+            --build-arg password=ubuntu \
+            --build-arg apt_source=ubuntu \
+            --build-arg version=1.0 \
+            -t ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.user_pc.student:latest \
+            -f /tmp/labs/${{ env.LAB }}/dockerfiles/Dockerfile.${{ env.LAB }}.user_pc.student \
+            ${{ env.BUILD_CONTEXT }}
+          docker push ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.user_pc.student:latest
+
+      - name: Build and push fileserver
+        run: |
+          docker build \
+            --build-arg registry=labtainers \
+            --build-arg lab=${{ env.LAB }} \
+            --build-arg labdir=${{ env.LAB }} \
+            --build-arg imagedir=fileserver \
+            --build-arg user_name=ubuntu \
+            --build-arg password=ubuntu \
+            --build-arg apt_source=ubuntu \
+            --build-arg version=1.0 \
+            -t ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.fileserver.student:latest \
+            -f /tmp/labs/${{ env.LAB }}/dockerfiles/Dockerfile.${{ env.LAB }}.fileserver.student \
+            ${{ env.BUILD_CONTEXT }}
+          docker push ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.fileserver.student:latest
+
+      - name: Make packages public via GitHub API
+        run: |
+          for pkg in \
+            "${{ env.LAB }}.gateway_proxy.student" \
+            "${{ env.LAB }}.user_pc.student" \
+            "${{ env.LAB }}.fileserver.student"; do
+            curl -s -X PATCH \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/user/packages/container/$(python3 -c "import urllib.parse; print(urllib.parse.quote('${pkg}', safe=''))")/versions" \
+              || true
+          done
+          echo "Note: Set packages to Public in GitHub Settings > Packages"
+
+      - name: Summary
+        run: |
+          echo "===================================="
+          echo "  Images pushed to ghcr.io:"
+          echo "  ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.gateway_proxy.student"
+          echo "  ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.user_pc.student"
+          echo "  ghcr.io/${{ github.repository_owner }}/${{ env.LAB }}.fileserver.student"
+          echo ""
+          echo "  IMPORTANT: Go to GitHub Settings > Packages"
+          echo "  and set each package visibility to PUBLIC"
+          echo "===================================="
